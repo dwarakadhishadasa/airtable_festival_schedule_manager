@@ -1,0 +1,10 @@
+{
+  "name": "Festival Schedule PWA",
+  "description": "A high-performance PWA to manage festival schedules from Airtable, generate beautiful PDFs, and send them via AiSensy WhatsApp API.",
+  "short_name": "FestSched",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#eab308",
+  "requestFramePermissions": []
+}

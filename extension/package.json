@@ -1,0 +1,22 @@
+{
+  "name": "festival-schedule-extension",
+  "version": "1.0.0",
+  "description": "Festival schedule, service list, and team assignment viewer with PDF export",
+  "scripts": {
+    "start": "block run",
+    "build": "block release"
+  },
+  "dependencies": {
+    "@airtable/blocks": "^1.10.1",
+    "lucide-react": "^0.562.0",
+    "pdfmake": "^0.3.5",
+    "react": "^16.14.0",
+    "react-dom": "^16.14.0"
+  },
+  "devDependencies": {
+    "@airtable/blocks-cli": "^3.0.0",
+    "@types/react": "^16.14.0",
+    "@types/react-dom": "^16.9.0",
+    "typescript": "^4.9.0"
+  }
+}
