@@ -191,7 +191,7 @@ const TeamAssignmentTable: React.FC<TeamAssignmentTableProps> = ({
         )}
 
         <div className="mt-16 border-t border-slate-100 pt-8 flex justify-between items-center opacity-40">
-          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">DUTY ASSIGNMENTS &bull; {new Date().toLocaleDateString()}</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">SERVICE ASSIGNMENTS &bull; {new Date().toLocaleDateString()}</p>
         </div>
       </div>
     </div>

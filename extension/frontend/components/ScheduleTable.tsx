@@ -66,6 +66,20 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ id, data, title, headerIm
       .trim();
   };
 
+  if (Object.keys(data).length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center px-8">
+        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+          <Clock className="w-8 h-8 text-slate-300" />
+        </div>
+        <p className="text-slate-700 font-bold text-base mb-1">No activities found</p>
+        <p className="text-slate-400 text-sm max-w-xs">
+          Add records to your <strong>Activities</strong> table. Each row needs a <strong>Date</strong>, <strong>Category</strong>, and <strong>Activity</strong> field.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white">
       <style>{`

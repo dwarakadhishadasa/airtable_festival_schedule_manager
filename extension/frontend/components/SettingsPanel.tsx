@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { AppConfig } from '../types';
-import { Settings, X, Send, Image as ImageIcon, CheckCircle, AlertCircle, Upload, Loader2 } from 'lucide-react';
+import { Settings, X, Image as ImageIcon, CheckCircle, AlertCircle, Upload, Loader2 } from 'lucide-react';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -49,10 +49,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     const reader = new FileReader();
     reader.onload = async () => {
       const base64 = reader.result as string;
-      // Rough size check: base64 length * 0.75 = bytes
-      const sizeKB = (base64.length * 3) / 4 / 1024;
-      if (sizeKB > 140) {
-        setImageError(`Image too large (${Math.round(sizeKB)}kB). Please compress it below 140kB.`);
+      // Check the base64 string length — this is what gets stored in GlobalConfig.
+      // Airtable GlobalConfig has a 150 kB total limit across all keys.
+      // 110 kB base64 ≈ 82 kB original file, leaving a ~40 kB buffer.
+      const base64SizeKB = base64.length / 1024;
+      if (base64SizeKB > 110) {
+        setImageError(`Image too large (${Math.round(base64SizeKB)}kB encoded). Please compress it to under 80kB and try again.`);
         setIsImageLoading(false);
         return;
       }
@@ -115,7 +117,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                   value={local.teamPdfTitle}
                   onChange={e => setLocal({ ...local, teamPdfTitle: e.target.value })}
-                  placeholder="e.g. FESTIVAL NAME - DEVOTEE WISE SERVICES"
+                  placeholder="e.g. FESTIVAL NAME - MEMBER-WISE SERVICES"
                 />
               </div>
             </div>
@@ -151,38 +153,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </label>
               {imageError && <p className="text-red-500 text-[10px] font-bold mt-2 text-center">{imageError}</p>}
               <p className="text-[10px] text-slate-400 mt-3 text-center leading-relaxed">
-                Stored in Airtable GlobalConfig. Keep image under 140kB — compress if needed.
+                Stored in Airtable GlobalConfig. Keep compressed image under 80kB — reduce dimensions or export at lower quality.
               </p>
             </div>
           </section>
 
-          {/* WhatsApp */}
-          <section className="space-y-4 pt-6 border-t border-slate-50">
-            <div className="flex items-center gap-2">
-              <Send className="w-4 h-4 text-slate-400" />
-              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">WhatsApp Gateway</h3>
-            </div>
-            <div className="space-y-3">
-              <input
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-                placeholder="AiSensy API Key"
-                value={local.aisensyApiKey}
-                onChange={e => setLocal({ ...local, aisensyApiKey: e.target.value })}
-              />
-              <input
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-                placeholder="Campaign Name"
-                value={local.aisensyCampaignName}
-                onChange={e => setLocal({ ...local, aisensyCampaignName: e.target.value })}
-              />
-              <input
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-                placeholder="Recipient Phone (e.g. 919800000000)"
-                value={local.whatsappRecipient}
-                onChange={e => setLocal({ ...local, whatsappRecipient: e.target.value })}
-              />
-            </div>
-          </section>
         </div>
 
         {/* Footer */}

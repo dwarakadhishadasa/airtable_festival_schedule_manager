@@ -38,9 +38,6 @@ export interface AirtableResponse {
 // AppConfig: no Airtable connection fields — the extension auto-connects to the base.
 // Only stores user-customisable settings.
 export interface AppConfig {
-  aisensyApiKey: string;
-  aisensyCampaignName: string;
-  whatsappRecipient: string;
   pdfTitle: string;
   servicePdfTitle: string;
   teamPdfTitle: string;

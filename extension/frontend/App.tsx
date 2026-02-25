@@ -9,9 +9,10 @@ import ServiceListTable from './components/ServiceListTable';
 import TeamAssignmentTable from './components/TeamAssignmentTable';
 import SettingsPanel from './components/SettingsPanel';
 import ReportModal from './components/ReportModal';
+import SetupGuide from './components/SetupGuide';
 import {
-  Share2, Settings as SettingsIcon, Download,
-  Calendar, ListChecks, ChevronRight, Users, FileText, Zap
+  Settings as SettingsIcon, Download,
+  Calendar, ListChecks, ChevronRight, Users, FileText, Zap, HelpCircle
 } from 'lucide-react';
 
 // Table names expected in the connected base
@@ -24,9 +25,6 @@ const GC = {
   PDF_TITLE:         'pdfTitle',
   SERVICE_PDF_TITLE: 'servicePdfTitle',
   TEAM_PDF_TITLE:    'teamPdfTitle',
-  AISENSY_KEY:       'aisensyApiKey',
-  AISENSY_CAMPAIGN:  'aisensyCampaignName',
-  WA_RECIPIENT:      'whatsappRecipient',
   HEADER_IMAGE:      'headerImageBase64',
 } as const;
 
@@ -67,12 +65,9 @@ const App: React.FC = () => {
   const baseName = base.name.toUpperCase();
 
   const config: AppConfig = {
-    pdfTitle:            (globalConfig.get(GC.PDF_TITLE)         as string) || `${baseName} - SCHEDULE`,
-    servicePdfTitle:     (globalConfig.get(GC.SERVICE_PDF_TITLE)  as string) || `${baseName} - SERVICE LIST`,
-    teamPdfTitle:        (globalConfig.get(GC.TEAM_PDF_TITLE)     as string) || `${baseName} - DEVOTEE WISE SERVICES`,
-    aisensyApiKey:       (globalConfig.get(GC.AISENSY_KEY)        as string) || '',
-    aisensyCampaignName: (globalConfig.get(GC.AISENSY_CAMPAIGN)   as string) || '',
-    whatsappRecipient:   (globalConfig.get(GC.WA_RECIPIENT)       as string) || '',
+    pdfTitle:        (globalConfig.get(GC.PDF_TITLE)         as string) || `${baseName} - SCHEDULE`,
+    servicePdfTitle: (globalConfig.get(GC.SERVICE_PDF_TITLE)  as string) || `${baseName} - SERVICE LIST`,
+    teamPdfTitle:    (globalConfig.get(GC.TEAM_PDF_TITLE)     as string) || `${baseName} - MEMBER-WISE SERVICES`,
   };
 
   const headerImageBase64 = (globalConfig.get(GC.HEADER_IMAGE) as string) || null;
@@ -117,6 +112,7 @@ const App: React.FC = () => {
   const [teamStatusFilter, setTeamStatusFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [isSettingsOpen, setIsSettingsOpen]   = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen]         = useState(false);
   const [status, setStatus]               = useState<string | null>(null);
   const [error, setError]                 = useState<string | null>(null);
 
@@ -166,9 +162,6 @@ const App: React.FC = () => {
       { path: [GC.PDF_TITLE],         value: newConfig.pdfTitle },
       { path: [GC.SERVICE_PDF_TITLE], value: newConfig.servicePdfTitle },
       { path: [GC.TEAM_PDF_TITLE],    value: newConfig.teamPdfTitle },
-      { path: [GC.AISENSY_KEY],       value: newConfig.aisensyApiKey },
-      { path: [GC.AISENSY_CAMPAIGN],  value: newConfig.aisensyCampaignName },
-      { path: [GC.WA_RECIPIENT],      value: newConfig.whatsappRecipient },
     ]);
   }, [globalConfig]);
 
@@ -240,17 +233,13 @@ const App: React.FC = () => {
 
   if (isMisconfigured) {
     return (
-      <div style={{ padding: 32, fontFamily: 'sans-serif', textAlign: 'center', color: '#ef4444' }}>
-        <p style={{ fontWeight: 'bold', fontSize: 16 }}>Table not found</p>
-        <p style={{ color: '#64748b', marginTop: 8 }}>
-          This extension expects tables named: <strong>Activities</strong>, <strong>Services</strong>, and <strong>Team Members</strong>.
-        </p>
-        <p style={{ color: '#64748b', marginTop: 4 }}>
-          {!activitiesTable && '• "Activities" table missing. '}
-          {!servicesTable   && '• "Services" table missing. '}
-          {!teamTable       && '• "Team Members" table missing.'}
-        </p>
-      </div>
+      <SetupGuide
+        tableStatus={{
+          activitiesFound: !!activitiesTable,
+          servicesFound:   !!servicesTable,
+          teamFound:       !!teamTable,
+        }}
+      />
     );
   }
 
@@ -278,10 +267,20 @@ const App: React.FC = () => {
               <span className="text-slate-400 text-xs font-medium">{base.name}</span>
             </div>
           </div>
-          <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl shadow-lg hover:bg-slate-800 transition-all active:scale-95">
-            <SettingsIcon className="w-4 h-4 text-slate-400" />
-            <span className="font-semibold text-sm">Settings</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsHelpOpen(true)}
+              title="Schema reference"
+              className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl shadow-sm hover:border-slate-300 transition-all active:scale-95"
+            >
+              <HelpCircle className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-sm">Schema</span>
+            </button>
+            <button onClick={() => setIsSettingsOpen(true)} className="flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl shadow-lg hover:bg-slate-800 transition-all active:scale-95">
+              <SettingsIcon className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-sm">Settings</span>
+            </button>
+          </div>
         </header>
 
         {/* Status / Error banners */}
@@ -317,12 +316,6 @@ const App: React.FC = () => {
           </button>
           <button onClick={() => setIsReportModalOpen(true)} className="flex-1 flex items-center justify-center gap-3 bg-amber-500 text-white px-6 py-4 rounded-xl font-bold shadow-md hover:bg-amber-600 transition-all active:scale-[0.98]">
             <FileText className="w-5 h-5 text-white" /> Full Report
-          </button>
-          <button
-            onClick={() => alert('WhatsApp integration requires a hosted backend to upload the PDF to a public URL first. This feature is not yet implemented.')}
-            className="flex-1 flex items-center justify-center gap-3 bg-slate-900 text-white px-6 py-4 rounded-xl font-bold shadow-lg hover:bg-slate-800 transition-all active:scale-[0.98]"
-          >
-            <Share2 className="w-5 h-5 text-emerald-400" /> Send WhatsApp
           </button>
         </div>
 
@@ -378,6 +371,18 @@ const App: React.FC = () => {
         onGenerate={handleGenerateFullReport}
         onClose={() => setIsReportModalOpen(false)}
       />
+
+      {isHelpOpen && (
+        <SetupGuide
+          asModal
+          tableStatus={{
+            activitiesFound: !!activitiesTable,
+            servicesFound:   !!servicesTable,
+            teamFound:       !!teamTable,
+          }}
+          onClose={() => setIsHelpOpen(false)}
+        />
+      )}
     </div>
   );
 };

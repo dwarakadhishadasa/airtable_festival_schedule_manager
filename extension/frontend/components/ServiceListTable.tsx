@@ -1,10 +1,7 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { GroupedData, NameMapping } from '../types';
 import { Clock } from 'lucide-react';
-
-// Keep this in sync with the value in extension/.env
-const GEMINI_API_KEY = 'AIzaSyBk1LqHcluUWth13I2ezcgvUJcLRD9Rjrc';
 
 interface ServiceListTableProps {
   id: string;
@@ -14,12 +11,6 @@ interface ServiceListTableProps {
 }
 
 const ServiceListTable: React.FC<ServiceListTableProps> = ({ id, data, title, nameMapping }) => {
-  const geminiApiKey = GEMINI_API_KEY;
-  const [geminiResult, setGeminiResult] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [modalTitle, setModalTitle] = useState('');
-
   const allRecords = Object.values(data).flatMap(dateGroup => Object.values(dateGroup).flat());
   const hasCoordinator = allRecords.some(r => r.fields.Coordinator && r.fields.Coordinator.length > 0);
   const hasTeam = allRecords.some(r => r.fields['Team Members'] && r.fields['Team Members'].length > 0);
@@ -41,55 +32,6 @@ const ServiceListTable: React.FC<ServiceListTableProps> = ({ id, data, title, na
 
   const colWidths = getColWidths();
   const colSpanCount = 1 + (hasCoordinator ? 1 : 0) + (hasTeam ? 1 : 0) + (hasStandby ? 1 : 0);
-
-  const callGemini = async (promptType: 'announce' | 'analyze') => {
-    if (!geminiApiKey) {
-      alert('Gemini API key not set. Please add it in Settings.');
-      return;
-    }
-    setIsLoading(true);
-    setShowModal(true);
-    setGeminiResult(null);
-    const contextData = JSON.stringify({ data, nameMapping });
-    let prompt = '';
-    if (promptType === 'announce') {
-      setModalTitle('✨ Draft Team Announcement');
-      prompt = `You are a cheerful team coordinator. Based on the following service roster JSON, write a friendly, engaging, and clear WhatsApp/Email announcement for the team.
-      - Group clearly by Date and then Service Category.
-      - Use emojis to make it readable and fun.
-      - Use the real names provided in the mapping.
-      - Include specific timings if available.
-      - End with an encouraging quote or message.
-      - Format with clean spacing.
-      Data: ${contextData}`;
-    } else {
-      setModalTitle('✨ Roster Analysis');
-      prompt = `Analyse the following service roster JSON for insights.
-      - Identify any potential conflicts (same person assigned to multiple roles on the same day).
-      - Highlight team members with heavy workloads (appearing frequently across services).
-      - Suggest any gaps if standby is empty (marked as '-' or missing).
-      - Keep the tone professional, helpful, and concise.
-      - Use bullet points.
-      Data: ${contextData}`;
-    }
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        }
-      );
-      const result = await response.json();
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated.';
-      setGeminiResult(text);
-    } catch {
-      setGeminiResult('Error generating content. Please check your connection and try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const getOrdinalDate = (dateStr: string) => {
     let cleanDateStr = dateStr;
@@ -119,6 +61,20 @@ const ServiceListTable: React.FC<ServiceListTableProps> = ({ id, data, title, na
     return ids.map(id => nameMapping[id] || id).join(', ');
   };
 
+  if (allRecords.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center px-8">
+        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+          <Clock className="w-8 h-8 text-slate-300" />
+        </div>
+        <p className="text-slate-700 font-bold text-base mb-1">No services found</p>
+        <p className="text-slate-400 text-sm max-w-xs">
+          Add records to your <strong>Services</strong> table. Each row needs a <strong>Date</strong>, <strong>Category</strong>, and <strong>Service</strong> field.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white relative">
       <style>{`
@@ -126,62 +82,6 @@ const ServiceListTable: React.FC<ServiceListTableProps> = ({ id, data, title, na
         #service-capture tr { page-break-inside: avoid !important; break-inside: avoid !important; }
         @media print { .no-print { display: none !important; } }
       `}</style>
-
-      {/* AI Actions Toolbar */}
-      <div className="no-print bg-slate-50 border-b border-slate-200 p-3 flex justify-end gap-2 sticky top-0 z-10">
-        <button
-          onClick={() => callGemini('announce')}
-          className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider shadow-sm hover:shadow-md transition-all hover:scale-105"
-        >
-          <span>✨ Draft Announcement</span>
-        </button>
-        <button
-          onClick={() => callGemini('analyze')}
-          className="flex items-center gap-2 bg-white text-slate-700 border border-slate-200 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider shadow-sm hover:bg-slate-50 transition-all hover:border-slate-300"
-        >
-          <span>✨ Analyse Roster</span>
-        </button>
-      </div>
-
-      {/* Gemini Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm no-print">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-sm font-black uppercase tracking-widest text-indigo-600 flex items-center gap-2">
-                {modalTitle}
-                {isLoading && <span className="animate-pulse">...</span>}
-              </h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto bg-white">
-              {isLoading ? (
-                <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                  <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">Consulting Gemini AI...</p>
-                </div>
-              ) : (
-                <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap font-medium">{geminiResult}</div>
-              )}
-            </div>
-            {!isLoading && (
-              <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
-                <button
-                  onClick={() => { if (geminiResult) { navigator.clipboard.writeText(geminiResult); alert('Copied to clipboard!'); } }}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-indigo-700 transition-colors"
-                >
-                  Copy Text
-                </button>
-                <button onClick={() => setShowModal(false)} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-50 transition-colors">
-                  Close
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <div id={id} className="bg-white p-6 max-w-full text-slate-900">
         <div className="text-center mb-6">

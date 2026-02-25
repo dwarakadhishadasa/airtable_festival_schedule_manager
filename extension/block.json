@@ -1,4 +1,7 @@
 {
   "version": "1.0",
-  "frontendEntry": "./frontend/index.tsx"
+  "frontendEntry": "./frontend/index.tsx",
+  "name": "Festival & Event Schedule Manager",
+  "description": "Plan and publish schedules for festivals, religious events, community gatherings, and non-profit programs. View your Activities, Services, and Member assignments in a clean layout and export polished PDFs in one click.",
+  "icon": "calendarEventSolid"
 }
