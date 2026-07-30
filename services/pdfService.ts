@@ -195,6 +195,8 @@ const addHeaderImage = (content: any[], headerImageBase64: string | null) => {
   }
 };
 
+const isHiddenRecord = (record: AirtableRecord) => record.fields.Hide === true;
+
 // --- Generators ---
 
 const generateScheduleDef = (records: AirtableRecord[], title: string, headerImageBase64: string | null) => {
@@ -291,7 +293,7 @@ const generateScheduleDef = (records: AirtableRecord[], title: string, headerIma
 };
 
 const generateServicesDef = (records: AirtableRecord[], mapping: NameMapping, title: string) => {
-  const grouped = groupData(records);
+  const grouped = groupData(records.filter(record => !isHiddenRecord(record)));
   const sortedDates = Object.keys(grouped).sort((a, b) => {
     // Priority: Unspecified Date first
     if (a === 'Unspecified Date') return -1;

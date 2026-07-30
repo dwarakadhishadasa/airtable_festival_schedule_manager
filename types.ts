@@ -28,6 +28,7 @@ export interface AirtableRecord {
     Timings?: string;
     Serial?: number; // Added for explicit ordering if available
     Select?: boolean;
+    Hide?: boolean;
   };
 }
 

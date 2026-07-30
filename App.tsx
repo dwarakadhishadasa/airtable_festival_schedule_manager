@@ -55,6 +55,8 @@ const INITIAL_CONFIG: AppConfig = {
   teamPdfTitle: ENV.PDF_TITLE_TEAM
 };
 
+const isHiddenRecord = (record: AirtableRecord) => record.fields.Hide === true;
+
 const App: React.FC = () => {
   const [config, setConfig] = useState<AppConfig>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -115,6 +117,10 @@ const App: React.FC = () => {
     acc[r.id] = r;
     return acc;
   }, {} as Record<string, AirtableRecord>), [serviceRecords]);
+
+  const visibleServiceRecords = useMemo(() => {
+    return serviceRecords.filter(record => !isHiddenRecord(record));
+  }, [serviceRecords]);
 
   const filteredTeamMembers = useMemo(() => {
     return teamMembers.filter(member => {
@@ -264,7 +270,7 @@ const App: React.FC = () => {
     const options = {
         viewMode,
         schedule: scheduleRecords,
-        services: serviceRecords,
+        services: visibleServiceRecords,
         teamMembers: viewMode === 'team' ? filteredTeamMembers : teamMembers, 
         serviceRecords: serviceRecords,
         nameMapping
@@ -307,7 +313,7 @@ const App: React.FC = () => {
       const pdfOptions = {
           viewMode: 'full' as ViewMode,
           schedule: scheduleRecords,
-          services: serviceRecords,
+          services: visibleServiceRecords,
           teamMembers: filteredTeamMembers,
           serviceRecords: serviceRecords,
           nameMapping,
@@ -428,7 +434,7 @@ const App: React.FC = () => {
                 <ScheduleTable id="schedule-capture" data={groupData(scheduleRecords)} title={config.pdfTitle} />
               )}
               {viewMode === 'services' && (
-                <ServiceListTable id="service-capture" data={groupData(serviceRecords)} title={config.servicePdfTitle} nameMapping={nameMapping} />
+                <ServiceListTable id="service-capture" data={groupData(visibleServiceRecords)} title={config.servicePdfTitle} nameMapping={nameMapping} />
               )}
               {viewMode === 'team' && (
                 <TeamAssignmentTable 
