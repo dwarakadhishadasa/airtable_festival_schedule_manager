@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Festival Schedule Manager
+Comment=Run the React development app for festival schedule management
+Path=/home/dwarakadas/projects/airtable_festival_schedule_manager
+Exec=/usr/bin/gnome-terminal -- /home/dwarakadas/projects/airtable_festival_schedule_manager/run-react-app.sh
+Terminal=false
+Icon=utilities-terminal
+Categories=Development;
+StartupNotify=true

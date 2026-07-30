@@ -1,0 +1,7 @@
+{
+  "version": "1.0",
+  "frontendEntry": "./frontend/index.tsx",
+  "name": "PDFForge",
+  "description": "Turn any Airtable base into polished, print-ready PDFs. Configure grouped table views and per-person assignment views over any tables, then export with one click.",
+  "icon": "document"
+}

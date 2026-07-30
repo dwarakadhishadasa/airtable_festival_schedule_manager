@@ -1,29 +1,42 @@
 
 import React, { useState } from 'react';
 import { X, FileText, Check, Download, Loader2, Image, Upload, Trash2 } from 'lucide-react';
+import { TabConfig } from '../types';
 
 interface ReportModalProps {
   isOpen: boolean;
-  onClose: () => void;
-  onGenerate: (options: { includeSchedule: boolean; includeServices: boolean; includeTeam: boolean }, images: File[]) => void;
+  tabs: TabConfig[];
+  onGenerate: (selectedTabIds: string[], images: File[]) => void;
   isGenerating: boolean;
+  onClose: () => void;
 }
 
-const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, isGenerating }) => {
-  const [options, setOptions] = useState({ includeSchedule: true, includeServices: true, includeTeam: true });
+const ReportModal: React.FC<ReportModalProps> = ({ isOpen, tabs, onGenerate, isGenerating, onClose }) => {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(tabs.map(t => t.id)));
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
+
+  // Sync selected IDs when tabs change
+  React.useEffect(() => {
+    setSelectedIds(new Set(tabs.map(t => t.id)));
+  }, [tabs]);
 
   if (!isOpen) return null;
 
-  const handleToggle = (key: keyof typeof options) => setOptions(prev => ({ ...prev, [key]: !prev[key] }));
+  const toggleTab = (id: string) =>
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) setSelectedImages(prev => [...prev, ...Array.from(e.target.files!)]);
   };
 
-  const removeImage = (index: number) => setSelectedImages(prev => prev.filter((_, i) => i !== index));
+  const removeImage = (index: number) =>
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
 
-  const isValid = Object.values(options).some(v => v);
+  const isValid = selectedIds.size > 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
@@ -38,21 +51,34 @@ const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, 
         </div>
 
         <div className="p-6 space-y-6 overflow-y-auto">
-          <div className="space-y-4">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Include Sections</p>
-            {(['includeSchedule', 'includeServices', 'includeTeam'] as const).map(key => {
-              const label = key === 'includeSchedule' ? 'Schedule' : key === 'includeServices' ? 'Service List' : 'Team View';
-              return (
-                <button key={key} onClick={() => handleToggle(key)} className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${options[key] ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                  <span className={`font-bold text-sm ${options[key] ? 'text-slate-900' : 'text-slate-500'}`}>{label}</span>
-                  {options[key] && <Check className="w-4 h-4 text-amber-600" />}
+          {/* Tab selection */}
+          <div className="space-y-3">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Include Views</p>
+            {tabs.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">No views configured.</p>
+            ) : (
+              tabs.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => toggleTab(tab.id)}
+                  className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${
+                    selectedIds.has(tab.id)
+                      ? 'border-amber-500 bg-amber-50'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <span className={`font-bold text-sm ${selectedIds.has(tab.id) ? 'text-slate-900' : 'text-slate-500'}`}>
+                    {tab.label}
+                  </span>
+                  {selectedIds.has(tab.id) && <Check className="w-4 h-4 text-amber-600" />}
                 </button>
-              );
-            })}
+              ))
+            )}
           </div>
 
+          {/* Image attachments */}
           <div className="space-y-3 pt-4 border-t border-slate-50">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Attachments</p>
               <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5">
                 <Upload className="w-3.5 h-3.5" /> Add Photos
@@ -74,7 +100,10 @@ const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, 
                       </div>
                       <span className="text-xs font-bold text-slate-600 truncate max-w-[150px]">{file.name}</span>
                     </div>
-                    <button onClick={() => removeImage(idx)} className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-md transition-colors">
+                    <button
+                      onClick={() => removeImage(idx)}
+                      className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-md transition-colors"
+                    >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -85,7 +114,11 @@ const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, 
         </div>
 
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 shrink-0">
-          <button onClick={() => onGenerate(options, selectedImages)} disabled={!isValid || isGenerating} className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 rounded-xl font-bold transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2">
+          <button
+            onClick={() => onGenerate(Array.from(selectedIds), selectedImages)}
+            disabled={!isValid || isGenerating}
+            className="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 rounded-xl font-bold transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+          >
             {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
             {isGenerating ? 'Generating...' : 'Download PDF Report'}
           </button>
