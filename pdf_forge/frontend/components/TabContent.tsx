@@ -9,7 +9,6 @@ import LinkedPerItemView from './LinkedPerItemView';
 interface TabContentProps {
   tab: TabConfig;
   isActive: boolean;
-  headerImageBase64: string | null;
   onRecordsUpdate: (tabId: string, primary: AirtableSDKRecord[], detail?: AirtableSDKRecord[]) => void;
 }
 
@@ -18,11 +17,10 @@ interface TabContentProps {
 interface GroupedInnerProps {
   tab: TabConfig;
   isActive: boolean;
-  headerImageBase64: string | null;
   onRecordsUpdate: (tabId: string, primary: AirtableSDKRecord[]) => void;
 }
 
-const GroupedInner: React.FC<GroupedInnerProps> = ({ tab, isActive, headerImageBase64, onRecordsUpdate }) => {
+const GroupedInner: React.FC<GroupedInnerProps> = ({ tab, isActive, onRecordsUpdate }) => {
   const base = useBase();
   const cfg = tab.groupedConfig!;
   const table = base.getTableByNameIfExists(cfg.tableName);
@@ -41,7 +39,6 @@ const GroupedInner: React.FC<GroupedInnerProps> = ({ tab, isActive, headerImageB
         sdkRecords={records}
         config={cfg}
         title={tab.pdfTitle || tab.label}
-        headerImageBase64={headerImageBase64}
       />
     </div>
   );
@@ -85,13 +82,12 @@ const LinkedInner: React.FC<LinkedInnerProps> = ({ tab, isActive, onRecordsUpdat
 
 // ─── Public dispatcher ───────────────────────────────────────────────────────
 
-const TabContent: React.FC<TabContentProps> = ({ tab, isActive, headerImageBase64, onRecordsUpdate }) => {
+const TabContent: React.FC<TabContentProps> = ({ tab, isActive, onRecordsUpdate }) => {
   if (tab.viewType === 'grouped' && tab.groupedConfig) {
     return (
       <GroupedInner
         tab={tab}
         isActive={isActive}
-        headerImageBase64={headerImageBase64}
         onRecordsUpdate={(id, primary) => onRecordsUpdate(id, primary)}
       />
     );

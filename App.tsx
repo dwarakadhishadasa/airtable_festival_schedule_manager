@@ -1,14 +1,18 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { AppConfig, AirtableRecord, GroupedData, NameMapping, TeamMember, ViewMode } from './types';
-import { fetchAirtableData, fetchTeamMembersMapping, fetchAirtableBaseName } from './services/airtableService';
-import { generatePdfBlob, downloadPdf, initHeaderImage } from './services/pdfService';
-import { sendToWhatsapp } from './services/whatsappService';
+import { AppConfig, AirtableRecord, BuiltInViewMode, GroupedData, NameMapping, SavedViewConfig, TableInfo, TabConfig, TeamMember } from './types';
+import { fetchAirtableData, fetchAirtableBaseName, fetchAirtableTables } from './services/airtableService';
+import { generatePdfBlob, downloadPdf, initHeaderImage, generateCustomViewPdfBlob, generateSavedViewsReportPdfBlob } from './services/pdfService';
 import ScheduleTable from './components/ScheduleTable';
 import ServiceListTable from './components/ServiceListTable';
 import TeamAssignmentTable from './components/TeamAssignmentTable';
 import ConfigModal from './components/ConfigModal';
 import ReportModal from './components/ReportModal';
+import ViewSettingsPanel from './components/ViewSettingsPanel';
+import GenericGroupedTableView from './components/GenericGroupedTableView';
+import GenericLinkedPerItemView from './components/GenericLinkedPerItemView';
+import { recordStoreKey } from './services/recordHelpers';
+import { formatSavedViewTitle } from './services/titleHelpers';
 import { 
   RefreshCw, 
   Share2, 
@@ -20,10 +24,14 @@ import {
   ChevronRight,
   Clock,
   Users,
-  FileText
+  FileText,
+  Plus,
+  Layers
 } from 'lucide-react';
 
 const STORAGE_KEY = 'fest_sched_config_v5';
+const VIEWS_STORAGE_KEY = 'fest_sched_saved_views_v1';
+const ACTIVE_VIEW_STORAGE_KEY = 'fest_sched_active_view_v1';
 const CACHE_KEY_SCHEDULE = 'fest_cache_schedule';
 const CACHE_KEY_SERVICES = 'fest_cache_services';
 const CACHE_KEY_TEAM = 'fest_cache_team';
@@ -55,6 +63,98 @@ const INITIAL_CONFIG: AppConfig = {
   teamPdfTitle: ENV.PDF_TITLE_TEAM
 };
 
+const createDefaultViews = (config: AppConfig): SavedViewConfig[] => [
+  {
+    id: 'default-schedule',
+    label: 'Schedule',
+    pdfTitle: config.pdfTitle || ENV.PDF_TITLE_SCHEDULE,
+    viewType: 'built-in',
+    builtInView: 'schedule',
+  },
+  {
+    id: 'default-services',
+    label: 'Service List',
+    pdfTitle: config.servicePdfTitle || ENV.PDF_TITLE_SERVICES,
+    viewType: 'built-in',
+    builtInView: 'services',
+  },
+  {
+    id: 'default-team',
+    label: 'Team View',
+    pdfTitle: config.teamPdfTitle || ENV.PDF_TITLE_TEAM,
+    viewType: 'built-in',
+    builtInView: 'team',
+  },
+];
+
+const isBuiltInView = (view: SavedViewConfig): view is Extract<SavedViewConfig, { viewType: 'built-in' }> => {
+  return view.viewType === 'built-in';
+};
+
+const tableInfoFromRecords = (name: string, records: AirtableRecord[]): TableInfo => {
+  const fields = new Set<string>();
+  records.forEach(record => {
+    Object.keys(record.fields).forEach(field => fields.add(field));
+  });
+  return {
+    name,
+    primaryFieldName: ['Name', 'Service', 'Activity'].find(field => fields.has(field)) ?? Array.from(fields)[0],
+    fields: Array.from(fields).sort().map(field => ({ name: field })),
+    views: [],
+  };
+};
+
+const linkedNameFieldRequestsForViews = (views: SavedViewConfig[], tables: TableInfo[]) => {
+  const tableByName = new Map(tables.map(table => [table.name, table]));
+  const requests: Array<{ tableName: string; viewName: string }> = [];
+
+  const addLinkedTarget = (sourceTableName: string, fieldName: string) => {
+    const field = tableByName.get(sourceTableName)?.fields.find(item => item.name === fieldName);
+    if (field?.linkedTableName) requests.push({ tableName: field.linkedTableName, viewName: '' });
+  };
+
+  views.forEach(view => {
+    if (view.viewType === 'grouped' && view.groupedConfig) {
+      const tableName = view.groupedConfig.tableName;
+      view.groupedConfig.columns.forEach(column => {
+        addLinkedTarget(tableName, column.fieldName);
+        (column.stackedFields ?? []).forEach(stacked => {
+          addLinkedTarget(tableName, stacked.fieldName);
+        });
+      });
+    }
+
+    if (view.viewType === 'linked-per-item' && view.linkedConfig) {
+      const tableName = view.linkedConfig.detailTableName;
+      view.linkedConfig.detailColumns.forEach(column => {
+        addLinkedTarget(tableName, column.fieldName);
+        (column.stackedFields ?? []).forEach(stacked => {
+          addLinkedTarget(tableName, stacked.fieldName);
+        });
+      });
+    }
+  });
+
+  return requests;
+};
+
+const inferRecordDisplayName = (record: AirtableRecord, primaryFieldName?: string) => {
+  const preferredFields = [primaryFieldName, 'Name', 'Service', 'Activity', 'Title'].filter(Boolean) as string[];
+  for (const fieldName of preferredFields) {
+    const value = record.fields[fieldName];
+    if (value === null || value === undefined) continue;
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      const names = value.map(item => typeof item === 'object' ? item.name ?? item.id : String(item)).filter(Boolean);
+      if (names.length > 0) return names.join(', ');
+    }
+    if (typeof value === 'object') return value.name ?? JSON.stringify(value);
+    const str = String(value);
+    if (str) return str;
+  }
+  return record.id;
+};
+
 const isHiddenRecord = (record: AirtableRecord) => record.fields.Hide === true;
 
 const App: React.FC = () => {
@@ -73,7 +173,26 @@ const App: React.FC = () => {
     };
   });
 
-  const [viewMode, setViewMode] = useState<ViewMode>('schedule');
+  const [views, setViews] = useState<SavedViewConfig[]>(() => {
+    const saved = localStorage.getItem(VIEWS_STORAGE_KEY);
+    if (!saved) return createDefaultViews(config);
+    try {
+      const parsed = JSON.parse(saved) as SavedViewConfig[];
+      return parsed.length > 0 ? parsed : createDefaultViews(config);
+    } catch {
+      return createDefaultViews(config);
+    }
+  });
+
+  const [activeViewId, setActiveViewId] = useState<string>(() => {
+    return localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || 'default-schedule';
+  });
+
+  const activeView = useMemo(() => {
+    return views.find(view => view.id === activeViewId) ?? views[0] ?? createDefaultViews(config)[0];
+  }, [views, activeViewId, config]);
+
+  const activeBuiltInMode: BuiltInViewMode | null = isBuiltInView(activeView) ? activeView.builtInView : null;
   
   const [scheduleRecords, setScheduleRecords] = useState<AirtableRecord[]>(() => {
     const cached = localStorage.getItem(CACHE_KEY_SCHEDULE);
@@ -99,12 +218,16 @@ const App: React.FC = () => {
     return localStorage.getItem(CACHE_KEY_TIMESTAMP);
   });
 
+  const [availableTables, setAvailableTables] = useState<TableInfo[]>([]);
+  const [customRecordsByKey, setCustomRecordsByKey] = useState<Record<string, AirtableRecord[]>>({});
+
   const [teamSearchTerm, setTeamSearchTerm] = useState('');
   const [teamTypeFilter, setTeamTypeFilter] = useState('FTM');
   const [teamStatusFilter, setTeamStatusFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
 
   const [isLoading, setIsLoading] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isViewSettingsOpen, setIsViewSettingsOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -113,14 +236,25 @@ const App: React.FC = () => {
     initHeaderImage();
   }, []);
 
-  const serviceMap = useMemo(() => serviceRecords.reduce((acc, r) => {
-    acc[r.id] = r;
-    return acc;
-  }, {} as Record<string, AirtableRecord>), [serviceRecords]);
+  useEffect(() => {
+    localStorage.setItem(VIEWS_STORAGE_KEY, JSON.stringify(views));
+    if (!views.find(view => view.id === activeViewId)) {
+      setActiveViewId(views[0]?.id ?? 'default-schedule');
+    }
+  }, [views, activeViewId]);
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeViewId);
+  }, [activeViewId]);
 
   const visibleServiceRecords = useMemo(() => {
     return serviceRecords.filter(record => !isHiddenRecord(record));
   }, [serviceRecords]);
+
+  const serviceMap = useMemo(() => visibleServiceRecords.reduce((acc, r) => {
+    acc[r.id] = r;
+    return acc;
+  }, {} as Record<string, AirtableRecord>), [visibleServiceRecords]);
 
   const filteredTeamMembers = useMemo(() => {
     return teamMembers.filter(member => {
@@ -145,6 +279,28 @@ const App: React.FC = () => {
     return ['All', ...Array.from(types).sort()];
   }, [teamMembers]);
 
+  const recordNameById = useMemo(() => {
+    const tableByName = new Map(availableTables.map(table => [table.name, table]));
+    const mapping: Record<string, string> = { ...nameMapping };
+
+    const addRecords = (tableName: string, records: AirtableRecord[]) => {
+      const primaryFieldName = tableByName.get(tableName)?.primaryFieldName;
+      records.forEach(record => {
+        mapping[record.id] = inferRecordDisplayName(record, primaryFieldName);
+      });
+    };
+
+    addRecords(config.airtableTableName || ENV.TABLE_ACTIVITIES, scheduleRecords);
+    addRecords(config.serviceTableName || ENV.TABLE_SERVICES, serviceRecords);
+
+    Object.entries(customRecordsByKey).forEach(([key, records]) => {
+      const tableName = key.split('::')[0];
+      addRecords(tableName, records);
+    });
+
+    return mapping;
+  }, [availableTables, nameMapping, config.airtableTableName, config.serviceTableName, scheduleRecords, serviceRecords, customRecordsByKey]);
+
   const groupData = (data: AirtableRecord[]): GroupedData => {
     const grouped = data.reduce((acc, record) => {
       const date = record.fields.Date || 'Unspecified Date';
@@ -163,7 +319,7 @@ const App: React.FC = () => {
     return grouped;
   };
 
-  const loadData = useCallback(async (force = false) => {
+  const loadData = useCallback(async (force = false, viewsOverride?: SavedViewConfig[]) => {
     if (!config.airtableApiKey || !config.airtableBaseId) {
       setIsConfigOpen(true);
       return;
@@ -172,6 +328,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     try {
+      let schemaTables: TableInfo[] = [];
       const baseName = await fetchAirtableBaseName(config);
       if (baseName) {
         const prefix = baseName.toUpperCase();
@@ -192,7 +349,20 @@ const App: React.FC = () => {
           };
           setConfig(newConfig);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(newConfig));
+          setViews(prev => prev.map(view => {
+            if (view.id === 'default-schedule') return { ...view, pdfTitle: expectedScheduleTitle };
+            if (view.id === 'default-services') return { ...view, pdfTitle: expectedServiceTitle };
+            if (view.id === 'default-team') return { ...view, pdfTitle: expectedTeamTitle };
+            return view;
+          }));
         }
+      }
+
+      try {
+        schemaTables = await fetchAirtableTables(config);
+        setAvailableTables(schemaTables);
+      } catch (schemaErr) {
+        console.warn('Could not fetch Airtable schema, will infer fields from loaded records.', schemaErr);
       }
 
       const teamRes = await fetchAirtableData(config, config.teamMembersTableName || ENV.TABLE_TEAM);
@@ -217,16 +387,61 @@ const App: React.FC = () => {
       setNameMapping(mapping);
       localStorage.setItem(CACHE_KEY_MAPPING, JSON.stringify(mapping));
 
+      let loadedScheduleRecords: AirtableRecord[] = [];
+      let loadedServiceRecords: AirtableRecord[] = [];
+
       if (config.airtableTableName) {
         const schedRes = await fetchAirtableData(config, config.airtableTableName);
-        setScheduleRecords(schedRes.records);
+        loadedScheduleRecords = schedRes.records;
+        setScheduleRecords(loadedScheduleRecords);
         localStorage.setItem(CACHE_KEY_SCHEDULE, JSON.stringify(schedRes.records));
       }
 
       if (config.serviceTableName) {
         const servRes = await fetchAirtableData(config, config.serviceTableName);
-        setServiceRecords(servRes.records);
+        loadedServiceRecords = servRes.records;
+        setServiceRecords(loadedServiceRecords);
         localStorage.setItem(CACHE_KEY_SERVICES, JSON.stringify(servRes.records));
+      }
+
+      if (schemaTables.length === 0) {
+        setAvailableTables([
+          tableInfoFromRecords(config.airtableTableName || ENV.TABLE_ACTIVITIES, loadedScheduleRecords),
+          tableInfoFromRecords(config.serviceTableName || ENV.TABLE_SERVICES, loadedServiceRecords),
+          tableInfoFromRecords(config.teamMembersTableName || ENV.TABLE_TEAM, teamRes.records),
+        ]);
+      }
+
+      const viewsToLoad = viewsOverride ?? views;
+      const customRequests = viewsToLoad.flatMap(view => {
+        if (view.viewType === 'grouped' && view.groupedConfig?.tableName) {
+          return [{ tableName: view.groupedConfig.tableName, viewName: view.groupedConfig.viewName ?? '' }];
+        }
+        if (view.viewType === 'linked-per-item' && view.linkedConfig) {
+          return [
+            { tableName: view.linkedConfig.primaryTableName, viewName: view.linkedConfig.primaryViewName ?? '' },
+            { tableName: view.linkedConfig.detailTableName, viewName: view.linkedConfig.detailViewName ?? '' },
+          ].filter(req => req.tableName);
+        }
+        return [];
+      });
+
+      customRequests.push(...linkedNameFieldRequestsForViews(viewsToLoad, schemaTables));
+
+      const uniqueCustomRequests = Array.from(
+        new Map(customRequests.map(req => [recordStoreKey(req.tableName, req.viewName), req])).values()
+      );
+
+      if (uniqueCustomRequests.length > 0) {
+        const entries = await Promise.all(
+          uniqueCustomRequests.map(async req => {
+            const result = await fetchAirtableData(config, req.tableName, req.viewName || undefined);
+            return [recordStoreKey(req.tableName, req.viewName), result.records] as const;
+          })
+        );
+        setCustomRecordsByKey(Object.fromEntries(entries));
+      } else {
+        setCustomRecordsByKey({});
       }
 
       const now = new Date().toLocaleString();
@@ -239,14 +454,17 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [config]);
+  }, [config, views]);
 
   useEffect(() => {
     const hasAnyData = scheduleRecords.length > 0 || serviceRecords.length > 0 || teamMembers.length > 0;
-    if (!hasAnyData && config.airtableApiKey && config.airtableBaseId) {
+    const hasCustomViews = views.some(view => view.viewType !== 'built-in');
+    const needsMetadata = availableTables.length === 0;
+    const needsCustomData = hasCustomViews && Object.keys(customRecordsByKey).length === 0;
+    if ((!hasAnyData || needsMetadata || needsCustomData) && config.airtableApiKey && config.airtableBaseId) {
       loadData(false);
     }
-  }, [config.airtableApiKey, config.airtableBaseId, loadData]);
+  }, [config.airtableApiKey, config.airtableBaseId, loadData, views, availableTables.length, customRecordsByKey, scheduleRecords.length, serviceRecords.length, teamMembers.length]);
 
   const handleSaveConfig = (newConfig: AppConfig) => {
     const mergedConfig = {
@@ -267,22 +485,34 @@ const App: React.FC = () => {
   };
 
   const generatePdf = async () => {
+    if (!isBuiltInView(activeView)) {
+      return await generateCustomViewPdfBlob({ ...activeView, pdfTitle: formatSavedViewTitle(activeView, config) } as TabConfig, customRecordsByKey, recordNameById);
+    }
+
+    const viewMode = activeView.builtInView;
+    const viewTitle = formatSavedViewTitle(activeView, config);
+    const pdfConfig = {
+      ...config,
+      pdfTitle: viewMode === 'schedule' ? viewTitle : config.pdfTitle,
+      servicePdfTitle: viewMode === 'services' ? viewTitle : config.servicePdfTitle,
+      teamPdfTitle: viewMode === 'team' ? viewTitle : config.teamPdfTitle,
+    };
     const options = {
         viewMode,
         schedule: scheduleRecords,
         services: visibleServiceRecords,
         teamMembers: viewMode === 'team' ? filteredTeamMembers : teamMembers, 
-        serviceRecords: serviceRecords,
+        serviceRecords: visibleServiceRecords,
         nameMapping
     };
-    return await generatePdfBlob(options, config);
+    return await generatePdfBlob(options, pdfConfig);
   };
 
   const handleDownloadPdf = async () => {
     try {
       setStatus('Generating PDF...');
       const blob = await generatePdf();
-      const title = viewMode === 'schedule' ? config.pdfTitle : viewMode === 'services' ? config.servicePdfTitle : config.teamPdfTitle;
+      const title = formatSavedViewTitle(activeView, config);
       downloadPdf(blob, `${title}.pdf`);
       setStatus('PDF Downloaded');
       setTimeout(() => setStatus(null), 2000);
@@ -300,7 +530,7 @@ const App: React.FC = () => {
     });
   };
 
-  const handleGenerateFullReport = async (options: { includeSchedule: boolean; includeServices: boolean; includeTeam: boolean }, images: File[]) => {
+  const handleGenerateFullReport = async (selectedViewIds: string[], images: File[]) => {
     try {
       setStatus('Processing Images...');
       // Convert images to base64 with file names (extension stripped)
@@ -310,27 +540,24 @@ const App: React.FC = () => {
       })));
       
       setStatus('Generating Full Report...');
-      const pdfOptions = {
-          viewMode: 'full' as ViewMode,
+      const selectedViews = views
+        .filter(view => selectedViewIds.includes(view.id))
+        .map(view => ({ ...view, pdfTitle: formatSavedViewTitle(view, config) }));
+      const blob = await generateSavedViewsReportPdfBlob(
+        selectedViews,
+        customRecordsByKey,
+        {
           schedule: scheduleRecords,
           services: visibleServiceRecords,
           teamMembers: filteredTeamMembers,
-          serviceRecords: serviceRecords,
+          serviceRecords: visibleServiceRecords,
           nameMapping,
-          reportOptions: options,
-          attachedImages: processedImages
-      };
-      
-      let fileName = 'Festival_Report';
-      if (options.includeSchedule) {
-          fileName = config.pdfTitle;
-      } else if (options.includeServices) {
-          fileName = config.servicePdfTitle;
-      } else if (options.includeTeam) {
-          fileName = config.teamPdfTitle;
-      }
-
-      const blob = await generatePdfBlob(pdfOptions, config);
+        },
+        processedImages,
+        config,
+        recordNameById
+      );
+      const fileName = selectedViews[0]?.pdfTitle || selectedViews[0]?.label || 'Festival_Report';
       downloadPdf(blob, `${fileName}.pdf`);
       setStatus('Report Downloaded');
       setTimeout(() => setStatus(null), 2000);
@@ -350,7 +577,7 @@ const App: React.FC = () => {
     try {
       setStatus('Preparing PDF for Send...');
       const blob = await generatePdf();
-      const title = viewMode === 'schedule' ? config.pdfTitle : viewMode === 'services' ? config.servicePdfTitle : config.teamPdfTitle;
+      const title = formatSavedViewTitle(activeView, config);
       downloadPdf(blob, `${title}.pdf`);
       setStatus('WhatsApp logic requires a public URL host');
       setTimeout(() => setStatus(null), 5000);
@@ -358,6 +585,27 @@ const App: React.FC = () => {
       setError('WhatsApp Error: ' + err.message);
     }
   };
+
+  const handleSaveViews = (nextViews: SavedViewConfig[]) => {
+    setViews(nextViews);
+    localStorage.setItem(VIEWS_STORAGE_KEY, JSON.stringify(nextViews));
+    setStatus('Views Saved');
+    setTimeout(() => setStatus(null), 2000);
+    if (nextViews.some(view => view.viewType !== 'built-in')) {
+      setTimeout(() => loadData(true, nextViews), 100);
+    }
+  };
+
+  const handleRestoreDefaultViews = () => {
+    const defaults = createDefaultViews(config);
+    setViews(defaults);
+    setActiveViewId(defaults[0].id);
+    localStorage.setItem(VIEWS_STORAGE_KEY, JSON.stringify(defaults));
+    setStatus('Default Views Restored');
+    setTimeout(() => setStatus(null), 2000);
+  };
+
+  const activeTitle = formatSavedViewTitle(activeView, config);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center">
@@ -367,10 +615,10 @@ const App: React.FC = () => {
             <div className="flex items-center gap-2 mb-2">
               <span className="bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded">Festival Management</span>
               <ChevronRight className="w-3 h-3 text-slate-300" />
-              <span className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">{viewMode.toUpperCase()}</span>
+              <span className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">{activeView.label.toUpperCase()}</span>
             </div>
             <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight leading-none mb-2">
-              {viewMode === 'schedule' ? config.pdfTitle : viewMode === 'services' ? config.servicePdfTitle : config.teamPdfTitle}
+              {activeTitle}
             </h1>
             <div className="flex items-center gap-4">
               <p className="text-slate-500 font-medium flex items-center gap-2 text-sm">
@@ -391,6 +639,10 @@ const App: React.FC = () => {
               <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-amber-500' : 'text-slate-400'}`} />
               <span className="font-semibold text-sm">Refresh</span>
             </button>
+            <button onClick={() => setIsViewSettingsOpen(true)} className="group flex items-center gap-2 px-5 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl shadow-sm hover:border-slate-300 transition-all active:scale-95">
+              <Layers className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-sm">Views</span>
+            </button>
             <button onClick={() => setIsConfigOpen(true)} className="flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl shadow-lg hover:bg-slate-800 transition-all active:scale-95">
               <SettingsIcon className="w-4 h-4 text-slate-400" />
               <span className="font-semibold text-sm">Settings</span>
@@ -399,14 +651,30 @@ const App: React.FC = () => {
         </header>
 
         <div className="flex flex-wrap gap-2 mb-8 no-print p-1 bg-slate-200/50 rounded-2xl w-fit">
-          <button onClick={() => setViewMode('schedule')} className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm transition-all ${viewMode === 'schedule' ? 'bg-white shadow-lg text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
-            <Calendar className="w-4 h-4" /> Schedule
-          </button>
-          <button onClick={() => setViewMode('services')} className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm transition-all ${viewMode === 'services' ? 'bg-white shadow-lg text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
-            <ListChecks className="w-4 h-4" /> Service List
-          </button>
-          <button onClick={() => setViewMode('team')} className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm transition-all ${viewMode === 'team' ? 'bg-white shadow-lg text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
-            <Users className="w-4 h-4" /> Team View
+          {views.map(view => {
+            const icon = isBuiltInView(view)
+              ? view.builtInView === 'schedule'
+                ? <Calendar className="w-4 h-4" />
+                : view.builtInView === 'services'
+                  ? <ListChecks className="w-4 h-4" />
+                  : <Users className="w-4 h-4" />
+              : <Layers className="w-4 h-4" />;
+            return (
+              <button
+                key={view.id}
+                onClick={() => setActiveViewId(view.id)}
+                className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm transition-all ${view.id === activeView.id ? 'bg-white shadow-lg text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                {icon} {view.label}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => setIsViewSettingsOpen(true)}
+            title="Add view"
+            className="px-3 py-3 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-white/60 transition-all"
+          >
+            <Plus className="w-4 h-4" />
           </button>
         </div>
 
@@ -430,17 +698,17 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="relative">
-              {viewMode === 'schedule' && (
-                <ScheduleTable id="schedule-capture" data={groupData(scheduleRecords)} title={config.pdfTitle} />
+              {activeBuiltInMode === 'schedule' && (
+                <ScheduleTable id="schedule-capture" data={groupData(scheduleRecords)} title={activeTitle} />
               )}
-              {viewMode === 'services' && (
-                <ServiceListTable id="service-capture" data={groupData(visibleServiceRecords)} title={config.servicePdfTitle} nameMapping={nameMapping} />
+              {activeBuiltInMode === 'services' && (
+                <ServiceListTable id="service-capture" data={groupData(visibleServiceRecords)} title={activeTitle} nameMapping={nameMapping} />
               )}
-              {viewMode === 'team' && (
+              {activeBuiltInMode === 'team' && (
                 <TeamAssignmentTable 
                   filteredMembers={filteredTeamMembers} 
-                  serviceRecords={serviceRecords} 
-                  title={config.teamPdfTitle}
+                  serviceRecords={visibleServiceRecords} 
+                  title={activeTitle}
                   nameMapping={nameMapping}
                   searchTerm={teamSearchTerm}
                   onSearchChange={setTeamSearchTerm}
@@ -451,13 +719,46 @@ const App: React.FC = () => {
                   uniqueTypes={teamUniqueTypes}
                 />
               )}
+              {activeView.viewType === 'grouped' && activeView.groupedConfig && (
+                <GenericGroupedTableView
+                  id={`custom-capture-${activeView.id}`}
+                  records={customRecordsByKey[recordStoreKey(activeView.groupedConfig.tableName, activeView.groupedConfig.viewName ?? '')] ?? []}
+                  config={activeView.groupedConfig}
+                  title={activeTitle}
+                  recordNameById={recordNameById}
+                />
+              )}
+              {activeView.viewType === 'linked-per-item' && activeView.linkedConfig && (
+                <GenericLinkedPerItemView
+                  id={`custom-capture-${activeView.id}`}
+                  primaryRecords={customRecordsByKey[recordStoreKey(activeView.linkedConfig.primaryTableName, activeView.linkedConfig.primaryViewName ?? '')] ?? []}
+                  detailRecords={customRecordsByKey[recordStoreKey(activeView.linkedConfig.detailTableName, activeView.linkedConfig.detailViewName ?? '')] ?? []}
+                  config={activeView.linkedConfig}
+                  title={activeTitle}
+                  recordNameById={recordNameById}
+                />
+              )}
             </div>
           )}
         </main>
       </div>
 
       <ConfigModal isOpen={isConfigOpen} config={config} onSave={handleSaveConfig} onClose={() => setIsConfigOpen(false)} />
-      <ReportModal isOpen={isReportModalOpen} isGenerating={!!status && status.includes('Generating')} onGenerate={handleGenerateFullReport} onClose={() => setIsReportModalOpen(false)} />
+      <ViewSettingsPanel
+        isOpen={isViewSettingsOpen}
+        views={views}
+        availableTables={availableTables}
+        onSaveViews={handleSaveViews}
+        onRestoreDefaults={handleRestoreDefaultViews}
+        onClose={() => setIsViewSettingsOpen(false)}
+      />
+      <ReportModal
+        isOpen={isReportModalOpen}
+        views={views}
+        isGenerating={!!status && status.includes('Generating')}
+        onGenerate={handleGenerateFullReport}
+        onClose={() => setIsReportModalOpen(false)}
+      />
     </div>
   );
 };

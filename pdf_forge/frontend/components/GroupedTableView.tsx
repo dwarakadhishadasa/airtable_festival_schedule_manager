@@ -10,7 +10,6 @@ interface GroupedTableViewProps {
   sdkRecords: AirtableSDKRecord[];
   config: GroupedViewConfig;
   title: string;
-  headerImageBase64?: string | null;
 }
 
 /** Normalize backward-compat: migrate old secondaryFieldName → stackedFields[0] */
@@ -22,7 +21,7 @@ function getStackedFields(col: ColumnConfig): StackedFieldConfig[] {
   return [];
 }
 
-const GroupedTableView: React.FC<GroupedTableViewProps> = ({ id, sdkRecords, config, title, headerImageBase64 }) => {
+const GroupedTableView: React.FC<GroupedTableViewProps> = ({ id, sdkRecords, config, title }) => {
   const visibleColumns = config.columns.filter(c => c.treatment !== 'checkbox-highlight');
   const highlightCol = config.columns.find(c => c.treatment === 'checkbox-highlight');
   const hasSecondary = !!config.secondaryGroupField;
@@ -148,9 +147,6 @@ const GroupedTableView: React.FC<GroupedTableViewProps> = ({ id, sdkRecords, con
       `}</style>
 
       <div id={id} className="bg-white p-6 max-w-full text-slate-900">
-        {headerImageBase64 && (
-          <img src={headerImageBase64} alt="Header" className="w-full max-h-48 object-contain mb-6" />
-        )}
         <div className="text-center mb-6">
           <h2 className="text-2xl font-black uppercase tracking-tighter text-slate-900 mb-1">{title}</h2>
           <div className="h-1 w-12 bg-amber-500 mx-auto mt-2 rounded-full" />

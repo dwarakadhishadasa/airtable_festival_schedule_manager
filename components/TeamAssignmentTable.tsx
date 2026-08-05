@@ -1,7 +1,8 @@
 
 import React, { useMemo } from 'react';
 import { AirtableRecord, TeamMember, NameMapping } from '../types';
-import { Search, Filter, UserX, UserCheck, Users, Clock } from 'lucide-react';
+import { findTimingConflicts } from '../services/timingConflicts';
+import { Search, Filter, UserX, UserCheck, Users, Clock, AlertTriangle } from 'lucide-react';
 
 interface TeamAssignmentTableProps {
   filteredMembers: TeamMember[];
@@ -39,7 +40,8 @@ const TeamAssignmentTable: React.FC<TeamAssignmentTableProps> = ({
 
   // Flatten member services into a list of rows for the table
   const getMemberRows = (member: TeamMember) => {
-    const rows: { id: string; date: string; role: string; service: string; timing: string; sortValue: string; select?: boolean }[] = [];
+    const rows: { assignmentId: string; id: string; date: string; role: string; service: string; timing: string; sortValue: string; select?: boolean; conflictLabel?: string }[] = [];
+    const assignments: { id: string; record: AirtableRecord; role: string; service: string }[] = [];
     
     const processServices = (ids: string[], role: string) => {
       if (!ids) return;
@@ -48,12 +50,22 @@ const TeamAssignmentTable: React.FC<TeamAssignmentTableProps> = ({
         if (record) {
           const timeSort = record.fields.From || record.fields["Start Time"] || record.fields.Timings || '00:00';
           const sortValue = `${record.fields.Date || '9999-99-99'}T${timeSort}`;
+          const assignmentId = `${record.id}:${role}`;
+          const service = record.fields.Service || 'Unknown Service';
+
+          assignments.push({
+            id: assignmentId,
+            record,
+            role,
+            service
+          });
 
           rows.push({
+            assignmentId,
             id: record.id,
             date: record.fields.Date || 'Unspecified',
             role: role,
-            service: record.fields.Service || 'Unknown Service',
+            service,
             timing: formatTiming(record.fields.Timings),
             sortValue: sortValue,
             select: record.fields.Select
@@ -65,6 +77,11 @@ const TeamAssignmentTable: React.FC<TeamAssignmentTableProps> = ({
     processServices(member.coordinatorServiceIds, 'Coordinator');
     processServices(member.teamMemberServiceIds, 'Team Member');
     processServices(member.standbyServiceIds, 'Standby');
+
+    const conflicts = findTimingConflicts(assignments.filter(assignment => assignment.role === 'Team Member'));
+    rows.forEach(row => {
+      row.conflictLabel = row.role === 'Team Member' ? conflicts[row.assignmentId]?.label : undefined;
+    });
 
     return rows.sort((a, b) => {
       return a.sortValue.localeCompare(b.sortValue);
@@ -268,7 +285,7 @@ const TeamAssignmentTable: React.FC<TeamAssignmentTableProps> = ({
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {rows.map((row, idx) => (
-                                        <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-200'}>
+                                        <tr key={row.assignmentId} className={row.conflictLabel ? 'bg-red-50' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-200'}>
                                             <td className="px-4 py-3 align-top">
                                                 <div className={`font-bold mb-1 ${row.select ? 'text-red-600' : 'text-slate-900'}`}>{row.service}</div>
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide
@@ -277,6 +294,12 @@ const TeamAssignmentTable: React.FC<TeamAssignmentTableProps> = ({
                                                       'bg-amber-100 text-amber-700'}`}>
                                                     {row.role}
                                                 </span>
+                                                {row.conflictLabel && (
+                                                    <div className="mt-2 flex items-start gap-1.5 text-[10px] font-bold leading-tight text-red-600">
+                                                        <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                                                        <span>Conflicts with {row.conflictLabel}</span>
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="px-4 py-3 align-top">
                                                 {renderTeamInfo(row.id, row.role)}

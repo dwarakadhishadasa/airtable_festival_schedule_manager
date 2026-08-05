@@ -84,7 +84,7 @@ const App: React.FC = () => {
       const tab  = tabs.find(t => t.id === activeTabId);
       const data = recordsRegistry.current.get(activeTabId);
       if (!tab || !data) { setError('Data not loaded yet — try again in a moment.'); setStatus(null); return; }
-      downloadTabPdf(tab, data.primary, data.detail, headerImageBase64);
+      downloadTabPdf(tab, data.primary, data.detail);
       setStatus('PDF Downloaded');
       setTimeout(() => setStatus(null), 2000);
     } catch (err: any) {
@@ -246,7 +246,6 @@ const App: React.FC = () => {
               key={tab.id}
               tab={tab}
               isActive={tab.id === activeTabId}
-              headerImageBase64={headerImageBase64}
               onRecordsUpdate={handleRecordsUpdate}
             />
           ))}

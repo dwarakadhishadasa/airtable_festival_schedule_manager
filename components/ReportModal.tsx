@@ -1,27 +1,32 @@
 
 import React, { useState } from 'react';
 import { X, FileText, Check, Download, Loader2, Image, Upload, Trash2 } from 'lucide-react';
+import { SavedViewConfig } from '../types';
 
 interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onGenerate: (options: { includeSchedule: boolean; includeServices: boolean; includeTeam: boolean }, images: File[]) => void;
+  views: SavedViewConfig[];
+  onGenerate: (selectedViewIds: string[], images: File[]) => void;
   isGenerating: boolean;
 }
 
-const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, isGenerating }) => {
-  const [options, setOptions] = useState({
-    includeSchedule: true,
-    includeServices: true,
-    includeTeam: true
-  });
-  
+const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, views, onGenerate, isGenerating }) => {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(views.map(view => view.id)));
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
+
+  React.useEffect(() => {
+    setSelectedIds(new Set(views.map(view => view.id)));
+  }, [views]);
 
   if (!isOpen) return null;
 
-  const handleToggle = (key: keyof typeof options) => {
-    setOptions(prev => ({ ...prev, [key]: !prev[key] }));
+  const handleToggle = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -36,10 +41,10 @@ const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, 
   };
 
   const handleGenerate = () => {
-    onGenerate(options, selectedImages);
+    onGenerate(Array.from(selectedIds), selectedImages);
   };
 
-  const isValid = Object.values(options).some(v => v);
+  const isValid = selectedIds.size > 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -56,31 +61,17 @@ const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, onGenerate, 
 
         <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
           <div className="space-y-4">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Include Sections</p>
-            
-            <button 
-              onClick={() => handleToggle('includeSchedule')}
-              className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${options.includeSchedule ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-            >
-              <span className={`font-bold text-sm ${options.includeSchedule ? 'text-slate-900' : 'text-slate-500'}`}>Schedule</span>
-              {options.includeSchedule && <Check className="w-4 h-4 text-amber-600" />}
-            </button>
-
-            <button 
-              onClick={() => handleToggle('includeServices')}
-              className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${options.includeServices ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-            >
-              <span className={`font-bold text-sm ${options.includeServices ? 'text-slate-900' : 'text-slate-500'}`}>Service List</span>
-              {options.includeServices && <Check className="w-4 h-4 text-amber-600" />}
-            </button>
-
-            <button 
-              onClick={() => handleToggle('includeTeam')}
-              className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${options.includeTeam ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-            >
-              <span className={`font-bold text-sm ${options.includeTeam ? 'text-slate-900' : 'text-slate-500'}`}>Team View</span>
-              {options.includeTeam && <Check className="w-4 h-4 text-amber-600" />}
-            </button>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Include Views</p>
+            {views.map(view => (
+              <button
+                key={view.id}
+                onClick={() => handleToggle(view.id)}
+                className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${selectedIds.has(view.id) ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+              >
+                <span className={`font-bold text-sm ${selectedIds.has(view.id) ? 'text-slate-900' : 'text-slate-500'}`}>{view.label}</span>
+                {selectedIds.has(view.id) && <Check className="w-4 h-4 text-amber-600" />}
+              </button>
+            ))}
           </div>
 
           <div className="space-y-3 pt-4 border-t border-slate-50">

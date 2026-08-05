@@ -103,13 +103,9 @@ function generateGroupedContent(
   records: AirtableSDKRecord[],
   config: GroupedViewConfig,
   title: string,
-  headerImageBase64: string | null,
 ): any[] {
   const content: any[] = [];
 
-  if (headerImageBase64) {
-    content.push({ image: headerImageBase64, width: 515, alignment: 'center', margin: [0, 0, 0, 10] });
-  }
   content.push(...headerBar(title));
 
   const visibleColumns = config.columns.filter((c: ColumnConfig) => c.treatment !== 'checkbox-highlight');
@@ -396,12 +392,11 @@ export function downloadTabPdf(
   tab: TabConfig,
   primaryRecords: AirtableSDKRecord[],
   detailRecords: AirtableSDKRecord[] | undefined,
-  headerImageBase64: string | null,
 ): void {
   let content: any[];
 
   if (tab.viewType === 'grouped' && tab.groupedConfig) {
-    content = generateGroupedContent(primaryRecords, tab.groupedConfig, tab.pdfTitle || tab.label, headerImageBase64);
+    content = generateGroupedContent(primaryRecords, tab.groupedConfig, tab.pdfTitle || tab.label);
   } else if (tab.viewType === 'linked-per-item' && tab.linkedConfig) {
     content = generateLinkedContent(primaryRecords, detailRecords ?? [], tab.linkedConfig, tab.pdfTitle || tab.label);
   } else {
@@ -425,7 +420,7 @@ export function downloadFullReport(
   parts.forEach((part, i) => {
     let sectionContent: any[];
     if (part.tab.viewType === 'grouped' && part.tab.groupedConfig) {
-      sectionContent = generateGroupedContent(part.primary, part.tab.groupedConfig, part.tab.pdfTitle || part.tab.label, null);
+      sectionContent = generateGroupedContent(part.primary, part.tab.groupedConfig, part.tab.pdfTitle || part.tab.label);
     } else if (part.tab.viewType === 'linked-per-item' && part.tab.linkedConfig) {
       sectionContent = generateLinkedContent(part.primary, part.detail ?? [], part.tab.linkedConfig, part.tab.pdfTitle || part.tab.label);
     } else {

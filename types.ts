@@ -29,7 +29,7 @@ export interface AirtableRecord {
     Serial?: number; // Added for explicit ordering if available
     Select?: boolean;
     Hide?: boolean;
-  };
+  } & Record<string, any>;
 }
 
 export interface AirtableResponse {
@@ -77,4 +77,112 @@ export interface PdfData {
     includeServices: boolean;
     includeTeam: boolean;
   };
+}
+
+export type FieldTreatment = 'text' | 'linked-names' | 'highlight';
+export type GenericViewType = 'grouped' | 'linked-per-item';
+
+export const LINK_LABEL_FIELD = '__link_label__';
+
+export interface StackedFieldConfig {
+  fieldName: string;
+  treatment: FieldTreatment | 'link-label';
+  showInlineFieldName?: boolean;
+  fontSize?: number;
+  fontWeight?: 'normal' | 'bold';
+}
+
+export interface ColumnConfig {
+  fieldName: string;
+  label: string;
+  alignment: 'left' | 'center' | 'right';
+  widthWeight: number;
+  treatment: FieldTreatment | 'checkbox-highlight';
+  fontSize?: number;
+  fontWeight?: 'normal' | 'bold';
+  stackedFields?: StackedFieldConfig[];
+  secondaryFieldName?: string;
+  secondaryTreatment?: FieldTreatment;
+}
+
+export interface GroupedViewConfig {
+  tableName: string;
+  viewName?: string;
+  primaryGroupField: string;
+  secondaryGroupField: string;
+  sortField: string;
+  columns: ColumnConfig[];
+}
+
+export interface LinkFieldConfig {
+  fieldName: string;
+  label: string;
+}
+
+export interface DetailColumnConfig {
+  fieldName: string;
+  label: string;
+  treatment: FieldTreatment | 'link-label';
+  alignment: 'left' | 'center' | 'right';
+  widthWeight: number;
+  showInlineFieldName?: boolean;
+  fontSize?: number;
+  fontWeight?: 'normal' | 'bold';
+  stackedFields?: StackedFieldConfig[];
+  secondaryFieldName?: string;
+  secondaryTreatment?: FieldTreatment | 'link-label';
+  secondaryShowInlineFieldName?: boolean;
+}
+
+export interface LinkedPerItemConfig {
+  primaryTableName: string;
+  primaryViewName?: string;
+  nameField: string;
+  typeField: string;
+  detailTableName: string;
+  detailViewName?: string;
+  linkFields: LinkFieldConfig[];
+  detailSortField: string;
+  detailGroupByField: string;
+  detailColumns: DetailColumnConfig[];
+}
+
+export interface TabConfig {
+  id: string;
+  label: string;
+  pdfTitle: string;
+  viewType: GenericViewType;
+  groupedConfig?: GroupedViewConfig;
+  linkedConfig?: LinkedPerItemConfig;
+}
+
+export type BuiltInViewMode = Exclude<ViewMode, 'full'>;
+
+export interface BuiltInTabConfig {
+  id: string;
+  label: string;
+  pdfTitle: string;
+  viewType: 'built-in';
+  builtInView: BuiltInViewMode;
+}
+
+export type SavedViewConfig = BuiltInTabConfig | TabConfig;
+
+export interface TableFieldInfo {
+  name: string;
+  id?: string;
+  type?: string;
+  linkedTableName?: string;
+}
+
+export interface TableViewInfo {
+  name: string;
+}
+
+export interface TableInfo {
+  name: string;
+  id?: string;
+  primaryFieldName?: string;
+  fields: TableFieldInfo[];
+  views: TableViewInfo[];
 }
