@@ -11,7 +11,7 @@ import ReportModal from './components/ReportModal';
 import ViewSettingsPanel from './components/ViewSettingsPanel';
 import GenericGroupedTableView from './components/GenericGroupedTableView';
 import GenericLinkedPerItemView from './components/GenericLinkedPerItemView';
-import { recordStoreKey } from './services/recordHelpers';
+import { reconcileTeamMemberAssignments, recordStoreKey, safeLinkedIds } from './services/recordHelpers';
 import { formatSavedViewTitle } from './services/titleHelpers';
 import { 
   RefreshCw, 
@@ -37,6 +37,50 @@ const CACHE_KEY_SERVICES = 'fest_cache_services';
 const CACHE_KEY_TEAM = 'fest_cache_team';
 const CACHE_KEY_MAPPING = 'fest_cache_mapping';
 const CACHE_KEY_TIMESTAMP = 'fest_cache_timestamp';
+
+const scopedStorageKey = (key: string, baseId: string) => `${key}:${baseId || 'no-base'}`;
+
+const readJsonStorage = <T,>(key: string, fallback: T): T => {
+  const saved = localStorage.getItem(key);
+  if (!saved) return fallback;
+  try {
+    return JSON.parse(saved) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeJsonStorage = (key: string, value: unknown) => {
+  localStorage.setItem(key, JSON.stringify(value));
+};
+
+const readViewsForBase = (baseId: string, config: AppConfig): SavedViewConfig[] => {
+  const scoped = localStorage.getItem(scopedStorageKey(VIEWS_STORAGE_KEY, baseId));
+  if (scoped) {
+    try {
+      const parsed = JSON.parse(scoped) as SavedViewConfig[];
+      return parsed.length > 0 ? parsed : createDefaultViews(config);
+    } catch {
+      return createDefaultViews(config);
+    }
+  }
+
+  const legacy = localStorage.getItem(VIEWS_STORAGE_KEY);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy) as SavedViewConfig[];
+      if (parsed.length > 0) {
+        writeJsonStorage(scopedStorageKey(VIEWS_STORAGE_KEY, baseId), parsed);
+        localStorage.removeItem(VIEWS_STORAGE_KEY);
+        return parsed;
+      }
+    } catch {
+      return createDefaultViews(config);
+    }
+  }
+
+  return createDefaultViews(config);
+};
 
 // "Environment Variables" / Constants
 const ENV = {
@@ -174,18 +218,14 @@ const App: React.FC = () => {
   });
 
   const [views, setViews] = useState<SavedViewConfig[]>(() => {
-    const saved = localStorage.getItem(VIEWS_STORAGE_KEY);
-    if (!saved) return createDefaultViews(config);
-    try {
-      const parsed = JSON.parse(saved) as SavedViewConfig[];
-      return parsed.length > 0 ? parsed : createDefaultViews(config);
-    } catch {
-      return createDefaultViews(config);
-    }
+    return readViewsForBase(config.airtableBaseId, config);
   });
+  const [viewsBaseId, setViewsBaseId] = useState(config.airtableBaseId);
 
   const [activeViewId, setActiveViewId] = useState<string>(() => {
-    return localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || 'default-schedule';
+    return localStorage.getItem(scopedStorageKey(ACTIVE_VIEW_STORAGE_KEY, config.airtableBaseId)) ||
+      localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) ||
+      'default-schedule';
   });
 
   const activeView = useMemo(() => {
@@ -195,28 +235,25 @@ const App: React.FC = () => {
   const activeBuiltInMode: BuiltInViewMode | null = isBuiltInView(activeView) ? activeView.builtInView : null;
   
   const [scheduleRecords, setScheduleRecords] = useState<AirtableRecord[]>(() => {
-    const cached = localStorage.getItem(CACHE_KEY_SCHEDULE);
-    return cached ? JSON.parse(cached) : [];
+    return readJsonStorage(scopedStorageKey(CACHE_KEY_SCHEDULE, config.airtableBaseId), []);
   });
   
   const [serviceRecords, setServiceRecords] = useState<AirtableRecord[]>(() => {
-    const cached = localStorage.getItem(CACHE_KEY_SERVICES);
-    return cached ? JSON.parse(cached) : [];
+    return readJsonStorage(scopedStorageKey(CACHE_KEY_SERVICES, config.airtableBaseId), []);
   });
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => {
-    const cached = localStorage.getItem(CACHE_KEY_TEAM);
-    return cached ? JSON.parse(cached) : [];
+    return readJsonStorage(scopedStorageKey(CACHE_KEY_TEAM, config.airtableBaseId), []);
   });
 
   const [nameMapping, setNameMapping] = useState<NameMapping>(() => {
-    const cached = localStorage.getItem(CACHE_KEY_MAPPING);
-    return cached ? JSON.parse(cached) : {};
+    return readJsonStorage(scopedStorageKey(CACHE_KEY_MAPPING, config.airtableBaseId), {});
   });
 
   const [lastSynced, setLastSynced] = useState<string | null>(() => {
-    return localStorage.getItem(CACHE_KEY_TIMESTAMP);
+    return localStorage.getItem(scopedStorageKey(CACHE_KEY_TIMESTAMP, config.airtableBaseId));
   });
+  const [dataBaseId, setDataBaseId] = useState(config.airtableBaseId);
 
   const [availableTables, setAvailableTables] = useState<TableInfo[]>([]);
   const [customRecordsByKey, setCustomRecordsByKey] = useState<Record<string, AirtableRecord[]>>({});
@@ -237,15 +274,37 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(VIEWS_STORAGE_KEY, JSON.stringify(views));
+    const nextViews = readViewsForBase(config.airtableBaseId, config);
+    const nextActiveViewId =
+      localStorage.getItem(scopedStorageKey(ACTIVE_VIEW_STORAGE_KEY, config.airtableBaseId)) ||
+      (nextViews.some(view => view.id === activeViewId) ? activeViewId : nextViews[0]?.id) ||
+      'default-schedule';
+
+    setViews(nextViews);
+    setViewsBaseId(config.airtableBaseId);
+    setActiveViewId(nextActiveViewId);
+    setScheduleRecords(readJsonStorage(scopedStorageKey(CACHE_KEY_SCHEDULE, config.airtableBaseId), []));
+    setServiceRecords(readJsonStorage(scopedStorageKey(CACHE_KEY_SERVICES, config.airtableBaseId), []));
+    setTeamMembers(readJsonStorage(scopedStorageKey(CACHE_KEY_TEAM, config.airtableBaseId), []));
+    setNameMapping(readJsonStorage(scopedStorageKey(CACHE_KEY_MAPPING, config.airtableBaseId), {}));
+    setLastSynced(localStorage.getItem(scopedStorageKey(CACHE_KEY_TIMESTAMP, config.airtableBaseId)));
+    setAvailableTables([]);
+    setCustomRecordsByKey({});
+    setDataBaseId(config.airtableBaseId);
+  }, [config.airtableBaseId]);
+
+  useEffect(() => {
+    if (viewsBaseId !== config.airtableBaseId) return;
+    writeJsonStorage(scopedStorageKey(VIEWS_STORAGE_KEY, config.airtableBaseId), views);
     if (!views.find(view => view.id === activeViewId)) {
       setActiveViewId(views[0]?.id ?? 'default-schedule');
     }
-  }, [views, activeViewId]);
+  }, [views, activeViewId, config.airtableBaseId, viewsBaseId]);
 
   useEffect(() => {
-    localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeViewId);
-  }, [activeViewId]);
+    if (viewsBaseId !== config.airtableBaseId) return;
+    localStorage.setItem(scopedStorageKey(ACTIVE_VIEW_STORAGE_KEY, config.airtableBaseId), activeViewId);
+  }, [activeViewId, config.airtableBaseId, viewsBaseId]);
 
   const visibleServiceRecords = useMemo(() => {
     return serviceRecords.filter(record => !isHiddenRecord(record));
@@ -256,8 +315,12 @@ const App: React.FC = () => {
     return acc;
   }, {} as Record<string, AirtableRecord>), [visibleServiceRecords]);
 
+  const teamMembersWithServiceAssignments = useMemo(() => {
+    return reconcileTeamMemberAssignments(teamMembers, serviceRecords);
+  }, [teamMembers, serviceRecords]);
+
   const filteredTeamMembers = useMemo(() => {
-    return teamMembers.filter(member => {
+    return teamMembersWithServiceAssignments.filter(member => {
       const matchesSearch = member.name.toLowerCase().includes(teamSearchTerm.toLowerCase());
       const matchesType = teamTypeFilter === 'All' || member.type === teamTypeFilter;
       
@@ -272,12 +335,12 @@ const App: React.FC = () => {
 
       return matchesSearch && matchesType && matchesStatus;
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [teamMembers, teamSearchTerm, teamTypeFilter, teamStatusFilter, serviceMap]);
+  }, [teamMembersWithServiceAssignments, teamSearchTerm, teamTypeFilter, teamStatusFilter, serviceMap]);
 
   const teamUniqueTypes = useMemo(() => {
-    const types = new Set(teamMembers.map(m => m.type).filter(Boolean));
+    const types = new Set(teamMembersWithServiceAssignments.map(m => m.type).filter(Boolean));
     return ['All', ...Array.from(types).sort()];
-  }, [teamMembers]);
+  }, [teamMembersWithServiceAssignments]);
 
   const recordNameById = useMemo(() => {
     const tableByName = new Map(availableTables.map(table => [table.name, table]));
@@ -374,18 +437,18 @@ const App: React.FC = () => {
           id: r.id,
           name: r.fields.Name || 'Unknown',
           type: typeStr,
-          coordinatorServiceIds: r.fields.Coordinator || [],
-          teamMemberServiceIds: r.fields["Team Member"] || [],
-          standbyServiceIds: r.fields.Standby || []
+          coordinatorServiceIds: safeLinkedIds(r, 'Coordinator'),
+          teamMemberServiceIds: safeLinkedIds(r, 'Team Member'),
+          standbyServiceIds: safeLinkedIds(r, 'Standby')
         };
       });
       setTeamMembers(members);
-      localStorage.setItem(CACHE_KEY_TEAM, JSON.stringify(members));
+      writeJsonStorage(scopedStorageKey(CACHE_KEY_TEAM, config.airtableBaseId), members);
 
       const mapping: NameMapping = {};
       members.forEach(m => mapping[m.id] = m.name);
       setNameMapping(mapping);
-      localStorage.setItem(CACHE_KEY_MAPPING, JSON.stringify(mapping));
+      writeJsonStorage(scopedStorageKey(CACHE_KEY_MAPPING, config.airtableBaseId), mapping);
 
       let loadedScheduleRecords: AirtableRecord[] = [];
       let loadedServiceRecords: AirtableRecord[] = [];
@@ -394,14 +457,14 @@ const App: React.FC = () => {
         const schedRes = await fetchAirtableData(config, config.airtableTableName);
         loadedScheduleRecords = schedRes.records;
         setScheduleRecords(loadedScheduleRecords);
-        localStorage.setItem(CACHE_KEY_SCHEDULE, JSON.stringify(schedRes.records));
+        writeJsonStorage(scopedStorageKey(CACHE_KEY_SCHEDULE, config.airtableBaseId), schedRes.records);
       }
 
       if (config.serviceTableName) {
         const servRes = await fetchAirtableData(config, config.serviceTableName);
         loadedServiceRecords = servRes.records;
         setServiceRecords(loadedServiceRecords);
-        localStorage.setItem(CACHE_KEY_SERVICES, JSON.stringify(servRes.records));
+        writeJsonStorage(scopedStorageKey(CACHE_KEY_SERVICES, config.airtableBaseId), servRes.records);
       }
 
       if (schemaTables.length === 0) {
@@ -446,7 +509,8 @@ const App: React.FC = () => {
 
       const now = new Date().toLocaleString();
       setLastSynced(now);
-      localStorage.setItem(CACHE_KEY_TIMESTAMP, now);
+      localStorage.setItem(scopedStorageKey(CACHE_KEY_TIMESTAMP, config.airtableBaseId), now);
+      setDataBaseId(config.airtableBaseId);
       setStatus('Cloud Data Refreshed');
       setTimeout(() => setStatus(null), 3000);
     } catch (err: any) {
@@ -457,14 +521,15 @@ const App: React.FC = () => {
   }, [config, views]);
 
   useEffect(() => {
-    const hasAnyData = scheduleRecords.length > 0 || serviceRecords.length > 0 || teamMembers.length > 0;
+    const hasCurrentBaseData = dataBaseId === config.airtableBaseId;
+    const hasAnyData = hasCurrentBaseData && (scheduleRecords.length > 0 || serviceRecords.length > 0 || teamMembers.length > 0);
     const hasCustomViews = views.some(view => view.viewType !== 'built-in');
-    const needsMetadata = availableTables.length === 0;
-    const needsCustomData = hasCustomViews && Object.keys(customRecordsByKey).length === 0;
+    const needsMetadata = !hasCurrentBaseData || availableTables.length === 0;
+    const needsCustomData = !hasCurrentBaseData || (hasCustomViews && Object.keys(customRecordsByKey).length === 0);
     if ((!hasAnyData || needsMetadata || needsCustomData) && config.airtableApiKey && config.airtableBaseId) {
       loadData(false);
     }
-  }, [config.airtableApiKey, config.airtableBaseId, loadData, views, availableTables.length, customRecordsByKey, scheduleRecords.length, serviceRecords.length, teamMembers.length]);
+  }, [config.airtableApiKey, config.airtableBaseId, dataBaseId, loadData, views, availableTables.length, customRecordsByKey, scheduleRecords.length, serviceRecords.length, teamMembers.length]);
 
   const handleSaveConfig = (newConfig: AppConfig) => {
     const mergedConfig = {
@@ -478,10 +543,6 @@ const App: React.FC = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedConfig));
     setStatus('Configuration Updated');
     setTimeout(() => setStatus(null), 2000);
-    
-    if (newConfig.airtableBaseId !== config.airtableBaseId) {
-      setTimeout(() => loadData(true), 100);
-    }
   };
 
   const generatePdf = async () => {
@@ -501,7 +562,7 @@ const App: React.FC = () => {
         viewMode,
         schedule: scheduleRecords,
         services: visibleServiceRecords,
-        teamMembers: viewMode === 'team' ? filteredTeamMembers : teamMembers, 
+        teamMembers: viewMode === 'team' ? filteredTeamMembers : teamMembersWithServiceAssignments,
         serviceRecords: visibleServiceRecords,
         nameMapping
     };
@@ -588,7 +649,8 @@ const App: React.FC = () => {
 
   const handleSaveViews = (nextViews: SavedViewConfig[]) => {
     setViews(nextViews);
-    localStorage.setItem(VIEWS_STORAGE_KEY, JSON.stringify(nextViews));
+    setViewsBaseId(config.airtableBaseId);
+    writeJsonStorage(scopedStorageKey(VIEWS_STORAGE_KEY, config.airtableBaseId), nextViews);
     setStatus('Views Saved');
     setTimeout(() => setStatus(null), 2000);
     if (nextViews.some(view => view.viewType !== 'built-in')) {
@@ -599,8 +661,9 @@ const App: React.FC = () => {
   const handleRestoreDefaultViews = () => {
     const defaults = createDefaultViews(config);
     setViews(defaults);
+    setViewsBaseId(config.airtableBaseId);
     setActiveViewId(defaults[0].id);
-    localStorage.setItem(VIEWS_STORAGE_KEY, JSON.stringify(defaults));
+    writeJsonStorage(scopedStorageKey(VIEWS_STORAGE_KEY, config.airtableBaseId), defaults);
     setStatus('Default Views Restored');
     setTimeout(() => setStatus(null), 2000);
   };

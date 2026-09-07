@@ -1,4 +1,4 @@
-import { AirtableRecord } from '../types';
+import { AirtableRecord, TeamMember } from '../types';
 
 export function safeStr(record: AirtableRecord, fieldName: string, recordNameById: Record<string, string> = {}): string {
   if (!fieldName) return '';
@@ -21,13 +21,64 @@ export function safeStr(record: AirtableRecord, fieldName: string, recordNameByI
 export function safeLinkedIds(record: AirtableRecord, fieldName: string): string[] {
   if (!fieldName) return [];
   const val = record.fields[fieldName];
-  if (!Array.isArray(val)) return [];
-  return val
+  const values = Array.isArray(val) ? val : val == null ? [] : [val];
+  return values
     .map(item => {
-      if (item && typeof item === 'object') return item.id;
+      if (item && typeof item === 'object') return item.id ?? item.recordId;
       return String(item);
     })
     .filter(Boolean);
+}
+
+type TeamAssignmentField =
+  | 'coordinatorServiceIds'
+  | 'teamMemberServiceIds'
+  | 'standbyServiceIds';
+
+const serviceRoleFields: Array<{ serviceField: string; memberField: TeamAssignmentField }> = [
+  { serviceField: 'Coordinator', memberField: 'coordinatorServiceIds' },
+  { serviceField: 'Team Members', memberField: 'teamMemberServiceIds' },
+  { serviceField: 'Standby', memberField: 'standbyServiceIds' },
+];
+
+/**
+ * The Services table is the source of truth for role assignments. Reconcile its
+ * links with the reverse fields on Team Members so either Airtable direction works.
+ */
+export function reconcileTeamMemberAssignments(
+  members: TeamMember[],
+  serviceRecords: AirtableRecord[],
+): TeamMember[] {
+  const serviceIdsByMember = new Map<string, Record<TeamAssignmentField, string[]>>();
+
+  members.forEach(member => {
+    serviceIdsByMember.set(member.id, {
+      coordinatorServiceIds: [],
+      teamMemberServiceIds: [],
+      standbyServiceIds: [],
+    });
+  });
+
+  serviceRecords.forEach(service => {
+    serviceRoleFields.forEach(({ serviceField, memberField }) => {
+      safeLinkedIds(service, serviceField).forEach(memberId => {
+        serviceIdsByMember.get(memberId)?.[memberField].push(service.id);
+      });
+    });
+  });
+
+  return members.map(member => {
+    const serviceIds = serviceIdsByMember.get(member.id);
+    const mergeIds = (existing: string[], derived: string[] = []) =>
+      Array.from(new Set([...existing, ...derived].filter(Boolean)));
+
+    return {
+      ...member,
+      coordinatorServiceIds: mergeIds(member.coordinatorServiceIds, serviceIds?.coordinatorServiceIds),
+      teamMemberServiceIds: mergeIds(member.teamMemberServiceIds, serviceIds?.teamMemberServiceIds),
+      standbyServiceIds: mergeIds(member.standbyServiceIds, serviceIds?.standbyServiceIds),
+    };
+  });
 }
 
 export function safeLinkedNames(record: AirtableRecord, fieldName: string, recordNameById: Record<string, string> = {}): string {
