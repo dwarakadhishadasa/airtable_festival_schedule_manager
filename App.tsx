@@ -135,6 +135,33 @@ const isBuiltInView = (view: SavedViewConfig): view is Extract<SavedViewConfig, 
   return view.viewType === 'built-in';
 };
 
+// The three built-in views only make sense when the base actually contains the
+// tables they read from. When a base lacks them (e.g. "MASTER CALENDER HKMC"),
+// the built-in views are dropped; they are restored automatically when a base
+// that has all three tables is selected again.
+const syncBuiltInViews = (
+  currentViews: SavedViewConfig[],
+  includeBuiltIn: boolean,
+  config: AppConfig,
+): SavedViewConfig[] => {
+  // Drop built-in views when the base no longer has the tables they read from.
+  let result = currentViews.filter(view => !isBuiltInView(view) || includeBuiltIn);
+
+  if (includeBuiltIn) {
+    // Restore any built-in views that are missing (e.g. after switching back to a
+    // base that has all three tables), keeping the default order at the front.
+    const presentModes = new Set(
+      result.filter(isBuiltInView).map(view => view.builtInView)
+    );
+    const missing = createDefaultViews(config)
+      .filter(isBuiltInView)
+      .filter(view => !presentModes.has(view.builtInView));
+    result = [...missing, ...result];
+  }
+
+  return result;
+};
+
 const tableInfoFromRecords = (name: string, records: AirtableRecord[]): TableInfo => {
   const fields = new Set<string>();
   records.forEach(record => {
@@ -428,50 +455,81 @@ const App: React.FC = () => {
         console.warn('Could not fetch Airtable schema, will infer fields from loaded records.', schemaErr);
       }
 
-      const teamRes = await fetchAirtableData(config, config.teamMembersTableName || ENV.TABLE_TEAM);
-      const members: TeamMember[] = teamRes.records.map(r => {
-        const rawType = r.fields.Type;
-        const typeStr = Array.isArray(rawType) ? rawType[0] : (rawType || 'FTM');
-        
-        return {
-          id: r.id,
-          name: r.fields.Name || 'Unknown',
-          type: typeStr,
-          coordinatorServiceIds: safeLinkedIds(r, 'Coordinator'),
-          teamMemberServiceIds: safeLinkedIds(r, 'Team Member'),
-          standbyServiceIds: safeLinkedIds(r, 'Standby')
-        };
-      });
-      setTeamMembers(members);
-      writeJsonStorage(scopedStorageKey(CACHE_KEY_TEAM, config.airtableBaseId), members);
+      // Show the three built-in views only when the base contains all three of
+      // their tables; otherwise drop them (and restore them when switching back).
+      if (schemaTables.length > 0) {
+        const tableNames = new Set(schemaTables.map(table => table.name));
+        const includeBuiltIn =
+          tableNames.has(config.airtableTableName || ENV.TABLE_ACTIVITIES) &&
+          tableNames.has(config.serviceTableName || ENV.TABLE_SERVICES) &&
+          tableNames.has(config.teamMembersTableName || ENV.TABLE_TEAM);
+        setViews(prev => {
+          const synced = syncBuiltInViews(prev, includeBuiltIn, config);
+          return JSON.stringify(synced) === JSON.stringify(prev) ? prev : synced;
+        });
+      }
 
-      const mapping: NameMapping = {};
-      members.forEach(m => mapping[m.id] = m.name);
-      setNameMapping(mapping);
-      writeJsonStorage(scopedStorageKey(CACHE_KEY_MAPPING, config.airtableBaseId), mapping);
+      // The built-in tables are optional: a base may only contain custom tables.
+      // A missing table must not abort the whole load, otherwise custom view
+      // records would never be fetched.
+      let teamRecords: AirtableRecord[] = [];
+      try {
+        const teamRes = await fetchAirtableData(config, config.teamMembersTableName || ENV.TABLE_TEAM);
+        teamRecords = teamRes.records;
+        const members: TeamMember[] = teamRes.records.map(r => {
+          const rawType = r.fields.Type;
+          const typeStr = Array.isArray(rawType) ? rawType[0] : (rawType || 'FTM');
+          
+          return {
+            id: r.id,
+            name: r.fields.Name || 'Unknown',
+            type: typeStr,
+            coordinatorServiceIds: safeLinkedIds(r, 'Coordinator'),
+            teamMemberServiceIds: safeLinkedIds(r, 'Team Member'),
+            standbyServiceIds: safeLinkedIds(r, 'Standby')
+          };
+        });
+        setTeamMembers(members);
+        writeJsonStorage(scopedStorageKey(CACHE_KEY_TEAM, config.airtableBaseId), members);
+
+        const mapping: NameMapping = {};
+        members.forEach(m => mapping[m.id] = m.name);
+        setNameMapping(mapping);
+        writeJsonStorage(scopedStorageKey(CACHE_KEY_MAPPING, config.airtableBaseId), mapping);
+      } catch (teamErr) {
+        console.warn(`Could not load "${config.teamMembersTableName || ENV.TABLE_TEAM}" table (it may not exist in this base).`, teamErr);
+      }
 
       let loadedScheduleRecords: AirtableRecord[] = [];
       let loadedServiceRecords: AirtableRecord[] = [];
 
       if (config.airtableTableName) {
-        const schedRes = await fetchAirtableData(config, config.airtableTableName);
-        loadedScheduleRecords = schedRes.records;
-        setScheduleRecords(loadedScheduleRecords);
-        writeJsonStorage(scopedStorageKey(CACHE_KEY_SCHEDULE, config.airtableBaseId), schedRes.records);
+        try {
+          const schedRes = await fetchAirtableData(config, config.airtableTableName);
+          loadedScheduleRecords = schedRes.records;
+          setScheduleRecords(loadedScheduleRecords);
+          writeJsonStorage(scopedStorageKey(CACHE_KEY_SCHEDULE, config.airtableBaseId), schedRes.records);
+        } catch (schedErr) {
+          console.warn(`Could not load "${config.airtableTableName}" table (it may not exist in this base).`, schedErr);
+        }
       }
 
       if (config.serviceTableName) {
-        const servRes = await fetchAirtableData(config, config.serviceTableName);
-        loadedServiceRecords = servRes.records;
-        setServiceRecords(loadedServiceRecords);
-        writeJsonStorage(scopedStorageKey(CACHE_KEY_SERVICES, config.airtableBaseId), servRes.records);
+        try {
+          const servRes = await fetchAirtableData(config, config.serviceTableName);
+          loadedServiceRecords = servRes.records;
+          setServiceRecords(loadedServiceRecords);
+          writeJsonStorage(scopedStorageKey(CACHE_KEY_SERVICES, config.airtableBaseId), servRes.records);
+        } catch (servErr) {
+          console.warn(`Could not load "${config.serviceTableName}" table (it may not exist in this base).`, servErr);
+        }
       }
 
       if (schemaTables.length === 0) {
         setAvailableTables([
           tableInfoFromRecords(config.airtableTableName || ENV.TABLE_ACTIVITIES, loadedScheduleRecords),
           tableInfoFromRecords(config.serviceTableName || ENV.TABLE_SERVICES, loadedServiceRecords),
-          tableInfoFromRecords(config.teamMembersTableName || ENV.TABLE_TEAM, teamRes.records),
+          tableInfoFromRecords(config.teamMembersTableName || ENV.TABLE_TEAM, teamRecords),
         ]);
       }
 
@@ -496,13 +554,23 @@ const App: React.FC = () => {
       );
 
       if (uniqueCustomRequests.length > 0) {
-        const entries = await Promise.all(
+        // Use allSettled so one failing table/view request (e.g. a linked table
+        // that does not exist in this base) does not discard every other result.
+        const settled = await Promise.allSettled(
           uniqueCustomRequests.map(async req => {
             const result = await fetchAirtableData(config, req.tableName, req.viewName || undefined);
-            return [recordStoreKey(req.tableName, req.viewName), result.records] as const;
+            return { key: recordStoreKey(req.tableName, req.viewName), records: result.records };
           })
         );
-        setCustomRecordsByKey(Object.fromEntries(entries));
+        const customRecords: Record<string, AirtableRecord[]> = {};
+        settled.forEach(result => {
+          if (result.status === 'fulfilled') {
+            customRecords[result.value.key] = result.value.records;
+          } else {
+            console.warn('Could not load custom view records:', result.reason);
+          }
+        });
+        setCustomRecordsByKey(customRecords);
       } else {
         setCustomRecordsByKey({});
       }
@@ -713,6 +781,13 @@ const App: React.FC = () => {
           </div>
         </header>
 
+        {error && (
+          <div className="mb-6 flex items-start justify-between gap-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 no-print">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 font-bold">✕</button>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2 mb-8 no-print p-1 bg-slate-200/50 rounded-2xl w-fit">
           {views.map(view => {
             const icon = isBuiltInView(view)
@@ -758,6 +833,17 @@ const App: React.FC = () => {
             <div className="h-[600px] flex flex-col items-center justify-center text-slate-400 gap-6">
               <Loader2 className="w-12 h-12 animate-spin text-amber-500" />
               <p className="font-bold text-slate-500 tracking-widest uppercase text-xs">Syncing Cloud Database...</p>
+            </div>
+          ) : views.length === 0 ? (
+            <div className="h-[400px] flex flex-col items-center justify-center text-center px-8 gap-3">
+              <Layers className="w-12 h-12 text-slate-300" />
+              <p className="text-slate-700 font-bold text-base">No views available</p>
+              <p className="text-slate-400 text-sm max-w-sm">
+                This base doesn't contain the built-in tables. Add a custom view to display its data.
+              </p>
+              <button onClick={() => setIsViewSettingsOpen(true)} className="mt-2 flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 transition-all">
+                <Plus className="w-4 h-4" /> Add view
+              </button>
             </div>
           ) : (
             <div className="relative">
